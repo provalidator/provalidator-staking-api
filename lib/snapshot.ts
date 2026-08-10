@@ -1,10 +1,16 @@
 import { fetchAptosStats } from './aptos';
-import { CHAINS, type ChainConfig } from './chains';
+import { CHAINS, type ChainConfig, staticOf } from './chains';
 import { fetchCosmosStats } from './cosmos';
 import { fetchMonadStats } from './monad';
 import { kvGet, kvSet } from './kv';
 import { fetchPrices, type PriceQuote } from './prices';
-import type { GlobalStats, LiveStats, ProjectStats, Snapshot } from './types';
+import type {
+  DataSource,
+  GlobalStats,
+  LiveStats,
+  ProjectStats,
+  Snapshot,
+} from './types';
 
 const SNAPSHOT_KEY = 'provalidator:snapshot:v1';
 /** 업스트림이 계속 죽어 있어도 이 기간 동안은 마지막 성공값으로 응답합니다. */
@@ -13,7 +19,12 @@ const SNAPSHOT_TTL_SECONDS = 86_400;
 /** 체인 데이터와 가격은 서로 독립적으로 폴백합니다. */
 interface Resolved<T> {
   value: T;
-  source: ProjectStats['source'];
+  source: DataSource;
+}
+
+interface PriceValue {
+  price: number | null;
+  marketCap: number | null;
 }
 
 /**
@@ -40,6 +51,8 @@ export async function buildSnapshot(): Promise<Snapshot> {
           return await fetchAptosStats(chain);
         case 'monad':
           return await fetchMonadStats(chain);
+        case 'asset':
+          return null; // 스테이킹 지표가 없는 자산
       }
     } catch (error) {
       console.error(`[${chain.id}] live fetch failed:`, error);
@@ -81,6 +94,7 @@ function resolveChainStats(
   live: LiveStats | null,
   previous: Snapshot | null,
 ): Resolved<LiveStats> {
+  if (chain.kind === 'asset') return { value: {}, source: 'none' };
   if (live) return { value: live, source: 'live' };
 
   const cached = previous?.projects[chain.id];
@@ -102,58 +116,69 @@ function resolvePrice(
   chain: ChainConfig,
   quote: PriceQuote | undefined,
   previous: Snapshot | null,
-): Resolved<{ price: number; marketCap: number }> {
+): Resolved<PriceValue> {
+  const fallback = staticOf(chain);
+
   if (quote) {
     return {
       value: {
         price: quote.usd,
-        marketCap: quote.usdMarketCap ?? chain.static.market_cap,
+        marketCap: quote.usdMarketCap ?? fallback?.market_cap ?? null,
       },
       source: 'live',
     };
   }
 
   const cached = previous?.projects[chain.id];
-  if (cached?.token_price && cached.price_source !== 'static') {
+  if (cached?.token_price && cached.price_source === 'live') {
     return {
-      value: {
-        price: cached.token_price,
-        marketCap: cached.market_cap ?? chain.static.market_cap,
-      },
+      value: { price: cached.token_price, marketCap: cached.market_cap },
       source: 'cached',
     };
   }
 
-  return {
-    value: { price: chain.static.token_price, marketCap: chain.static.market_cap },
-    source: 'static',
-  };
+  if (fallback) {
+    return {
+      value: { price: fallback.token_price, marketCap: fallback.market_cap },
+      source: 'static',
+    };
+  }
+
+  // CoinGecko 미등재 자산 (NOBL, IP). 가짜 값을 만들지 않고 null 로 둡니다.
+  return { value: { price: null, marketCap: null }, source: 'none' };
 }
 
 function toProjectStats(
   chain: ChainConfig,
   stats: Resolved<LiveStats>,
-  price: Resolved<{ price: number; marketCap: number }>,
+  price: Resolved<PriceValue>,
   timestamp: number,
 ): ProjectStats {
-  const fallback = chain.static;
-  const apr = stats.value.apr ?? fallback.apr;
-  const stakedAmount = stats.value.staked_amount ?? fallback.staked_amount;
+  const isAsset = chain.kind === 'asset';
+  const fallback = staticOf(chain);
   const tokenPrice = price.value.price;
+
+  const apr = isAsset ? null : (stats.value.apr ?? fallback?.apr ?? null);
+  const fees = isAsset ? null : (stats.value.fees ?? fallback?.fees ?? null);
+  const staked = isAsset
+    ? null
+    : (stats.value.staked_amount ?? fallback?.staked_amount ?? null);
 
   return {
     chain_id: chain.id,
     project_title: chain.projectTitle,
     token: chain.token,
-    fees: round(stats.value.fees ?? fallback.fees, 4),
+    type: isAsset ? 'asset' : 'validator',
+    fees: round(fees, 4),
     apr: round(apr, 6),
-    apr_percent: round(apr * 100, 4),
+    apr_percent: apr === null ? null : round(apr * 100, 4),
     token_price: tokenPrice,
-    staked_amount: round(stakedAmount, 6),
-    staked_amount_usd: round(stakedAmount * tokenPrice, 2),
+    staked_amount: round(staked, 6),
+    staked_amount_usd:
+      staked === null || tokenPrice === null ? null : round(staked * tokenPrice, 2),
     // 위임자 수는 static 폴백이 없습니다. 실제로 못 세면 null 로 내보냅니다 —
     // 하드코딩된 숫자를 대신 내보내면 total_delegators 가 조용히 부풀려집니다.
-    delegators: stats.value.delegators ?? null,
+    delegators: isAsset ? null : (stats.value.delegators ?? null),
     market_cap: round(price.value.marketCap, 2),
     source: stats.source,
     price_source: price.source,
@@ -163,18 +188,23 @@ function toProjectStats(
 
 export function computeGlobalStats(snapshot: Snapshot): GlobalStats {
   const projects = Object.values(snapshot.projects);
+  // 가격만 추적하는 자산은 합산에서 빠집니다 — 우리가 운영하는 밸리데이터의 지표만 셉니다.
+  const validators = projects.filter((p) => p.type === 'validator');
   return {
     total_assets_usd_value: round(
-      projects.reduce((sum, p) => sum + (p.staked_amount_usd ?? 0), 0),
+      validators.reduce((sum, p) => sum + (p.staked_amount_usd ?? 0), 0),
       2,
-    ),
-    total_delegators: projects.reduce((sum, p) => sum + (p.delegators ?? 0), 0),
-    total_chains: projects.length,
+    ) as number,
+    total_delegators: validators.reduce((sum, p) => sum + (p.delegators ?? 0), 0),
+    total_chains: validators.length,
     timestamp: snapshot.generated_at,
   };
 }
 
-function round(value: number, digits: number): number {
+function round(value: number, digits: number): number;
+function round(value: number | null, digits: number): number | null;
+function round(value: number | null, digits: number): number | null {
+  if (value === null) return null;
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
 }

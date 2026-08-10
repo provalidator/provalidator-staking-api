@@ -6,10 +6,18 @@
  * - `apr_percent` : 백분율 (14.5)         ← 기존 Framer 호환용
  * - `fees`        : 커미션 백분율 (5.0)
  */
+/** live = 방금 수집 / cached = 마지막 성공 스냅샷 / static = 하드코딩 폴백 / none = 해당 없음 */
+export type DataSource = 'live' | 'cached' | 'static' | 'none';
+
 export interface ProjectStats {
   chain_id: string;
   project_title: string;
   token: string;
+  /**
+   * validator = 프로발리데이터가 밸리데이터를 운영하는 체인 (스테이킹 지표 있음)
+   * asset     = 가격만 추적하는 자산 (스테이킹 지표는 전부 null)
+   */
+  type: 'validator' | 'asset';
   fees: number | null;
   apr: number | null;
   apr_percent: number | null;
@@ -18,10 +26,10 @@ export interface ProjectStats {
   staked_amount_usd: number | null;
   delegators: number | null;
   market_cap: number | null;
-  /** 체인 데이터 출처. live = 방금 체인에서 수집 / cached = 마지막 성공 스냅샷 / static = 하드코딩 폴백 */
-  source: 'live' | 'cached' | 'static';
+  /** 체인 데이터 출처. type='asset' 이면 항상 'none' 입니다. */
+  source: DataSource;
   /** 가격·시총 출처. 체인 데이터와 독립적으로 폴백됩니다 (CoinGecko 만 죽는 경우가 있음). */
-  price_source: 'live' | 'cached' | 'static';
+  price_source: DataSource;
   /** 이 체인 데이터가 실제로 수집된 시각 (unix seconds) */
   timestamp: number;
 }

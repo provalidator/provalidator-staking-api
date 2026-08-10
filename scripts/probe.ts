@@ -8,6 +8,7 @@ async function main() {
 
   const rows = Object.values(snapshot.projects).map((p) => ({
     token: p.token,
+    type: p.type,
     chain: p.source,
     price: p.price_source,
     'fees%': p.fees,

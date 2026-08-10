@@ -13,13 +13,16 @@ interface BaseChain {
   id: string;
   projectTitle: string;
   token: string;
-  /** 나중에 CoinGecko 붙일 때 사용 (현재는 미사용) */
+  /** CoinGecko 가격 조회용. 미등재 자산은 없을 수 있습니다. */
   coingeckoId?: string;
-  /** 라이브 수집 실패 시 폴백. 지금은 Aptos/Monad 가 항상 이 값을 씁니다. */
+}
+
+/** 밸리데이터를 운영하는 체인은 라이브 수집 실패 시 쓸 폴백 값을 갖습니다. */
+interface ValidatorChain extends BaseChain {
   static: StaticStats;
 }
 
-export interface CosmosChain extends BaseChain {
+export interface CosmosChain extends ValidatorChain {
   kind: 'cosmos';
   valoper: string;
   denom: string;
@@ -29,7 +32,7 @@ export interface CosmosChain extends BaseChain {
   aprStrategy: AprStrategy;
 }
 
-export interface AptosChain extends BaseChain {
+export interface AptosChain extends ValidatorChain {
   kind: 'aptos';
   /** 밸리데이터 operator 주소. 여기서 스테이크 풀들을 역으로 찾습니다. */
   operator: string;
@@ -40,7 +43,7 @@ export interface AptosChain extends BaseChain {
   rest: string[];
 }
 
-export interface MonadChain extends BaseChain {
+export interface MonadChain extends ValidatorChain {
   kind: 'monad';
   /** 스테이킹 프리컴파일의 uint64 validatorId. 모르면 null → static 폴백. */
   validatorId: number | null;
@@ -50,7 +53,30 @@ export interface MonadChain extends BaseChain {
   rpc: string[];
 }
 
-export type ChainConfig = CosmosChain | AptosChain | MonadChain;
+/**
+ * 밸리데이터를 운영하지 않고 가격·시총만 추적하는 자산.
+ * 스테이킹 지표(위임량·커미션·APR·위임자)는 전부 null 로 나가고
+ * total_assets_usd_value / total_delegators 합산에도 들어가지 않습니다.
+ */
+export interface AssetConfig extends BaseChain {
+  kind: 'asset';
+}
+
+export type ChainConfig = CosmosChain | AptosChain | MonadChain | AssetConfig;
+
+/** 자산에는 static 폴백이 없습니다. */
+export function staticOf(chain: ChainConfig): StaticStats | undefined {
+  return chain.kind === 'asset' ? undefined : chain.static;
+}
+
+function asset(
+  id: string,
+  projectTitle: string,
+  token: string,
+  coingeckoId?: string,
+): AssetConfig {
+  return { kind: 'asset', id, projectTitle, token, coingeckoId };
+}
 
 /**
  * REST 엔드포인트는 공개 노드 기본값입니다.
@@ -234,6 +260,23 @@ export const CHAINS: ChainConfig[] = [
       market_cap: 10_000_000_000,
     },
   },
+
+  // ---- 아래부터는 밸리데이터를 운영하지 않는 자산입니다 (가격·시총만) ----
+  // CoinGecko id 는 실제 조회로 심볼까지 검증했습니다.
+  asset('zetachain', 'Zetachain', 'ZETA', 'zetachain'),
+  asset('persistence', 'Persistence', 'XPRT', 'persistence'),
+  asset('nillion', 'Nillion', 'NIL', 'nillion'),
+  // Noble 은 거버넌스 토큰이 CoinGecko 에 없습니다 (검색 결과가 브릿지된 USDC 뿐).
+  asset('noble', 'Noble', 'NOBL'),
+  asset('ssv', 'SSV Network', 'SSV', 'ssv-network'),
+  asset('bitcoin', 'Bitcoin', 'BTC', 'bitcoin'),
+  asset('ethereum', 'Ethereum', 'ETH', 'ethereum'),
+  asset('solana', 'Solana', 'SOL', 'solana'),
+  asset('usdc', 'USD Coin', 'USDC', 'usd-coin'),
+  asset('hyperliquid', 'Hyperliquid', 'HYPE', 'hyperliquid'),
+  // Story(IP) 도 CoinGecko 미등재입니다. 'story-2' 는 심볼이 DATA 인 다른 자산입니다.
+  asset('story', 'Story', 'IP'),
+  asset('dydx', 'dYdX', 'DYDX', 'dydx-chain'),
 ];
 
 export const CHAINS_BY_ID = new Map(CHAINS.map((c) => [c.id, c]));

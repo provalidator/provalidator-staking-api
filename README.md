@@ -27,7 +27,7 @@ Vercel 서버리스 함수의 파일시스템은 읽기 전용이고, `/tmp` 는
 | 요청 | 설명 |
 |---|---|
 | `?endpoint=chains` | **신규.** 전체 체인 + 글로벌 스탯을 한 번에 |
-| `?endpoint=chain_stats&token=ATOM` | 체인 1개 (`chain_id=ATOM` 도 동일하게 동작) |
+| `?endpoint=chain_stats&token=ATOM` | 체인 1개 (`chain_id` / `chain` 도 동일하게 동작) |
 | `?endpoint=global_stats` | 합산 스탯 (하드코딩 아님 — 체인 데이터에서 계산) |
 | `?endpoint=health` | 진단용. KV 연결 상태를 왕복 테스트로 확인 (캐시 안 함) |
 
@@ -51,6 +51,7 @@ Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 �
       "chain_id": "cosmos",
       "project_title": "Cosmos Hub",
       "token": "ATOM",
+      "type": "validator",
       "fees": 5.0,
       "apr": 0.1421,
       "apr_percent": 14.21,
@@ -69,11 +70,27 @@ Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 �
 
 ## 현재 데이터 소스
 
+응답의 `type` 필드로 두 종류가 구분됩니다.
+
+**`type: "validator"` — 프로발리데이터가 밸리데이터를 운영하는 7개 체인**
+
 | 체인 | 체인 데이터 | 가격 / 시총 |
 |---|---|---|
 | Cosmos Hub, Osmosis, Axelar, Agoric, AtomOne | **live** (커미션, 위임량, 위임자 수, 순 APR) | **live** (CoinGecko) |
 | Aptos | **live** (커미션, 위임량, 순 APR) | **live** (CoinGecko) |
 | Monad | **live** (커미션, 위임량) | **live** (CoinGecko) |
+
+**`type: "asset"` — 밸리데이터를 운영하지 않고 가격만 추적하는 12개 자산**
+
+ZETA · XPRT · NIL · NOBL · SSV · BTC · ETH · SOL · USDC · HYPE · IP · DYDX
+
+스테이킹 지표(`fees` `apr` `staked_amount` `delegators`)는 전부 `null` 이고
+`total_assets_usd_value` / `total_delegators` / `total_chains` 합산에도 들어가지 않습니다.
+즉 글로벌 스탯은 항상 "우리가 실제로 운영하는 밸리데이터"만 집계합니다.
+
+> **NOBL 과 IP 는 가격도 `null` 입니다.** 둘 다 CoinGecko 미등재라서요.
+> (Noble 검색은 브릿지된 USDC 만 나오고, `story-2` 는 심볼이 `DATA` 인 다른 자산입니다.)
+> 등재되면 `lib/chains.ts` 에 `coingeckoId` 만 채우면 됩니다.
 
 체인 데이터와 가격은 **서로 독립적으로 폴백**합니다. CoinGecko 만 죽어도 체인 수치는 라이브로 나가고,
 반대도 마찬가지입니다. 응답의 `source` / `price_source` 필드로 각각 어디서 왔는지 확인할 수 있습니다.
