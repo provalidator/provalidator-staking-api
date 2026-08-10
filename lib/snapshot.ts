@@ -1,5 +1,7 @@
+import { fetchAptosStats } from './aptos';
 import { CHAINS, type ChainConfig } from './chains';
 import { fetchCosmosStats } from './cosmos';
+import { fetchMonadStats } from './monad';
 import { kvGet, kvSet } from './kv';
 import { fetchPrices, type PriceQuote } from './prices';
 import type { GlobalStats, LiveStats, ProjectStats, Snapshot } from './types';
@@ -30,9 +32,15 @@ export async function buildSnapshot(): Promise<Snapshot> {
     CHAINS.map((c) => c.coingeckoId).filter((id): id is string => Boolean(id)),
   );
   const livePromises = CHAINS.map(async (chain): Promise<LiveStats | null> => {
-    if (chain.kind !== 'cosmos') return null; // Aptos / Monad: 아직 어댑터 없음
     try {
-      return await fetchCosmosStats(chain);
+      switch (chain.kind) {
+        case 'cosmos':
+          return await fetchCosmosStats(chain);
+        case 'aptos':
+          return await fetchAptosStats(chain);
+        case 'monad':
+          return await fetchMonadStats(chain);
+      }
     } catch (error) {
       console.error(`[${chain.id}] live fetch failed:`, error);
       return null;
@@ -143,7 +151,9 @@ function toProjectStats(
     token_price: tokenPrice,
     staked_amount: round(stakedAmount, 6),
     staked_amount_usd: round(stakedAmount * tokenPrice, 2),
-    delegators: stats.value.delegators ?? fallback.delegators,
+    // 위임자 수는 static 폴백이 없습니다. 실제로 못 세면 null 로 내보냅니다 —
+    // 하드코딩된 숫자를 대신 내보내면 total_delegators 가 조용히 부풀려집니다.
+    delegators: stats.value.delegators ?? null,
     market_cap: round(price.value.marketCap, 2),
     source: stats.source,
     price_source: price.source,

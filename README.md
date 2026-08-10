@@ -71,7 +71,8 @@ Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 �
 | 체인 | 체인 데이터 | 가격 / 시총 |
 |---|---|---|
 | Cosmos Hub, Osmosis, Axelar, Agoric, AtomOne | **live** (커미션, 위임량, 위임자 수, 순 APR) | **live** (CoinGecko) |
-| Aptos, Monad | static (`lib/chains.ts`) | **live** (CoinGecko) |
+| Aptos | **live** (커미션, 위임량, 순 APR) | **live** (CoinGecko) |
+| Monad | **live** (커미션, 위임량) | **live** (CoinGecko) |
 
 체인 데이터와 가격은 **서로 독립적으로 폴백**합니다. CoinGecko 만 죽어도 체인 수치는 라이브로 나가고,
 반대도 마찬가지입니다. 응답의 `source` / `price_source` 필드로 각각 어디서 왔는지 확인할 수 있습니다.
@@ -79,10 +80,34 @@ Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 �
 가격은 CoinGecko `simple/price` 를 요청 1회로 전 체인 조회합니다. 키 없이 동작하지만 429 가 보이면
 `COINGECKO_API_KEY` 에 무료 demo 키를 넣으세요.
 
-> ⚠️ **`total_assets_usd_value` 주의** — Aptos / Monad 의 `staked_amount` 는 아직 하드코딩된
-> 임의값입니다. 여기에 실제 가격이 곱해지므로 합산 총액의 대부분이 이 두 체인에서 나옵니다.
-> 실측 기준 라이브 5개 체인 합계는 약 $5M 인데 전체 합계는 약 $550M 으로 잡힙니다.
-> 어댑터를 붙이기 전까지는 이 수치를 대외 노출하지 않거나, static 체인을 합산에서 제외하세요.
+**위임자 수(`delegators`)에는 static 폴백이 없습니다.** 실제로 셀 수 없으면 `null` 을 내보냅니다.
+하드코딩된 숫자를 대신 채우면 `total_delegators` 가 조용히 부풀려지기 때문입니다.
+Aptos 와 Monad 는 구조상 이 값을 못 세므로 항상 `null` 입니다 (아래 참고).
+
+### Aptos
+
+`0x1::delegation_pool` 이 아니라 `0x1::staking_contract` 모델입니다 — 공개 위임 풀이 아니라
+staker ↔ operator 1:1 계약이라 **공개 위임자라는 개념이 없습니다** (`delegators: null`).
+
+operator 주소로 인덱서를 조회해 스테이크 풀들을 찾고, 각 풀의 `0x1::stake::StakePool` 에서
+`active + pending_active` 를 합산합니다 (`pending_inactive` 는 언본딩 중이라 제외).
+커미션은 풀이 아니라 staker 계정의 `0x1::staking_contract::Store` 에 operator 별로 들어 있습니다.
+
+APR 은 `StakingRewardsConfig.rewards_rate`(FixedPoint64) × 연간 에포크 수로 계산합니다.
+`StakingConfig.rewards_rate` 는 거버넌스로 갱신되지 않는 레거시 필드라 값이 다릅니다
+(레거시 기준 7.0%, 실제 2.60%). 현재 `rewards_rate == min_rewards_rate` 로 하한에 도달한 상태입니다.
+
+### Monad
+
+스테이킹이 컨트랙트가 아니라 **프리컴파일**(`0x…1000`)이고, `getValidator(uint64 validatorId)`
+하나로 조회됩니다. 프리컴파일은 STATICCALL 을 거부하지만 `eth_call` 은 CALL 이라 정상 동작합니다.
+
+> ⚠️ **validatorId 는 주소로 역추적할 수 없습니다.** 익스플로러에 쓰이는 주소
+> (`0x279FC7…`)와 온체인 `authAddress`(`0x3673f7e6…`)가 다릅니다.
+> 밸리데이터 221개를 전수 조회해도 매칭되지 않으므로 `lib/chains.ts` 에 id 를 직접 넣어야 합니다.
+
+Monad 는 보상률을 온체인에 노출하지 않아 APR 은 static 폴백입니다. 단 `consensusStake == 0`
+(= 액티브 셋에 없음)이면 실제 보상이 0 이므로 `apr: 0` 으로 보고합니다.
 
 ### APR 계산식
 
@@ -144,8 +169,8 @@ npx vercel --prod
 ## 다음 작업
 
 - [x] CoinGecko 가격/시총 연동 (`lib/prices.ts`)
-- [ ] Aptos / Monad 하드코딩 위임량이 `total_assets_usd_value` 를 왜곡하는 문제 정리
+- [x] Aptos 어댑터 (`lib/aptos.ts`)
+- [x] Monad 어댑터 (`lib/monad.ts`)
 - [ ] Axelar `x/reward` 기반 APR 어댑터
 - [ ] Osmosis taker fee 반영한 APR 보정
-- [ ] Aptos 어댑터 — fullnode REST `/v1/accounts/{addr}/resource/0x1::stake::StakePool`
-- [ ] Monad 어댑터 — 스테이킹 컨트랙트 조회
+- [ ] Monad APR — 온체인 소스가 없어 현재 static 폴백

@@ -28,13 +28,28 @@ export interface CosmosChain extends BaseChain {
   aprStrategy: AprStrategy;
 }
 
-export interface ExternalChain extends BaseChain {
-  kind: 'external';
-  address: string;
-  note: string;
+export interface AptosChain extends BaseChain {
+  kind: 'aptos';
+  /** 밸리데이터 operator 주소. 여기서 스테이크 풀들을 역으로 찾습니다. */
+  operator: string;
+  /** 인덱서가 죽었을 때 쓸 알려진 풀 주소 (operator 조회 결과와 동일) */
+  knownStakePools: string[];
+  indexer: string;
+  exponent: number;
+  rest: string[];
 }
 
-export type ChainConfig = CosmosChain | ExternalChain;
+export interface MonadChain extends BaseChain {
+  kind: 'monad';
+  /** 스테이킹 프리컴파일의 uint64 validatorId. 모르면 null → static 폴백. */
+  validatorId: number | null;
+  /** 참고용으로 남겨둔, 원래 받은 주소 */
+  authAddress: string;
+  exponent: number;
+  rpc: string[];
+}
+
+export type ChainConfig = CosmosChain | AptosChain | MonadChain;
 
 /**
  * REST 엔드포인트는 공개 노드 기본값입니다.
@@ -169,39 +184,52 @@ export const CHAINS: ChainConfig[] = [
     },
   },
 
-  // ---- 아직 라이브 어댑터 없음: 항상 static 값을 반환합니다 ----
   {
-    kind: 'external',
+    kind: 'aptos',
     id: 'aptos',
     projectTitle: 'Aptos',
     token: 'APT',
     coingeckoId: 'aptos',
-    address:
+    operator:
       '0xdfb7b8b27f5bbfd61dd76bacd2c5339a15b583e686b136bec586f00d50043b86',
-    note: 'Aptos fullnode REST (/v1/accounts/{addr}/resource/0x1::stake::StakePool) 어댑터 필요',
+    // operator 로 인덱서를 조회해 얻은 풀들. 인덱서 장애 시 폴백으로 씁니다.
+    knownStakePools: [
+      '0xaaf21bad66f3064d712e24f82819d7fb41031fc48a146aba8e271d375d177ff9',
+      '0x4cc22e5d2e84794c3c672b0b34145898ee971a4ff042eabae23627547f6dac80',
+    ],
+    indexer: 'https://api.mainnet.aptoslabs.com/v1/graphql',
+    exponent: 8,
+    rest: resolveRest('aptos', ['https://api.mainnet.aptoslabs.com/v1']),
     static: {
-      fees: 3.0,
-      apr: 0.078,
+      fees: 10.0,
+      apr: 0.026,
       token_price: 7.25,
-      staked_amount: 750_000_000,
-      delegators: 48_000,
+      staked_amount: 9_553_395,
+      delegators: 0,
       market_cap: 7_800_000_000,
     },
   },
   {
-    kind: 'external',
+    kind: 'monad',
     id: 'monad',
     projectTitle: 'Monad',
     token: 'MON',
     coingeckoId: 'monad',
-    address: '0x279FC7DdDB5D7cD6114A71e10e522B58CF868700',
-    note: 'Monad staking contract 조회 어댑터 필요',
+    validatorId: 110,
+    // 익스플로러에 쓰이는 주소. 온체인 authAddress(0x3673f7e6d7a26fb48d55cd28f0b1313dd84df7ff)
+    // 와는 다르므로 주소로 validatorId 를 역추적할 수 없습니다.
+    authAddress: '0x279FC7DdDB5D7cD6114A71e10e522B58CF868700',
+    exponent: 18,
+    rpc: (process.env.RPC_MONAD ? [process.env.RPC_MONAD] : []).concat([
+      'https://rpc.monad.xyz',
+      'https://monad.drpc.org',
+    ]),
     static: {
       fees: 7.0,
       apr: 0.256,
       token_price: 0.35,
-      staked_amount: 4_500_000_000,
-      delegators: 2_500,
+      staked_amount: 0,
+      delegators: 0,
       market_cap: 10_000_000_000,
     },
   },
