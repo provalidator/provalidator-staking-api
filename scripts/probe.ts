@@ -8,11 +8,13 @@ async function main() {
 
   const rows = Object.values(snapshot.projects).map((p) => ({
     token: p.token,
-    source: p.source,
+    chain: p.source,
+    price: p.price_source,
     'fees%': p.fees,
     'apr%': p.apr_percent,
     staked: p.staked_amount === null ? null : Math.round(p.staked_amount),
     delegators: p.delegators,
+    usd_price: p.token_price,
     usd: p.staked_amount_usd === null ? null : Math.round(p.staked_amount_usd),
   }));
 

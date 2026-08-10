@@ -37,7 +37,7 @@ Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 �
 - 모든 수치가 **문자열이 아니라 number**
 - `apr` 은 소수(`0.145`), `apr_percent` 는 백분율(`14.5`) — 둘 다 제공
 - `global_stats` 는 체인 데이터에서 합산 계산
-- 응답에 `source` 필드 추가: `live` | `cached` | `static`
+- 응답에 `source` / `price_source` 필드 추가: `live` | `cached` | `static`
 - `chain_id` → `token` 으로 이름 정리 (구 파라미터도 계속 동작)
 
 ### 응답 예시
@@ -57,8 +57,9 @@ Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 �
       "staked_amount": 1234567.89,
       "staked_amount_usd": 10432098.67,
       "delegators": 5231,
-      "market_cap": 3300000000,
+      "market_cap": 727053354.99,
       "source": "live",
+      "price_source": "live",
       "timestamp": 1754800000
     }
   }
@@ -67,13 +68,21 @@ Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 �
 
 ## 현재 데이터 소스
 
-| 체인 | 상태 | 라이브로 수집되는 값 |
+| 체인 | 체인 데이터 | 가격 / 시총 |
 |---|---|---|
-| Cosmos Hub, Osmosis, Axelar, Agoric, AtomOne | **live** | 커미션, 위임량, 위임자 수, 순 APR |
-| Aptos, Monad | static | 전부 하드코딩 (`lib/chains.ts`) |
+| Cosmos Hub, Osmosis, Axelar, Agoric, AtomOne | **live** (커미션, 위임량, 위임자 수, 순 APR) | **live** (CoinGecko) |
+| Aptos, Monad | static (`lib/chains.ts`) | **live** (CoinGecko) |
 
-**가격 / 시가총액은 전 체인 하드코딩입니다.** CoinGecko 를 붙이려면 `lib/snapshot.ts` 의
-`tokenPrice` 부분만 교체하면 됩니다 (`coingeckoId` 는 이미 설정에 들어 있습니다).
+체인 데이터와 가격은 **서로 독립적으로 폴백**합니다. CoinGecko 만 죽어도 체인 수치는 라이브로 나가고,
+반대도 마찬가지입니다. 응답의 `source` / `price_source` 필드로 각각 어디서 왔는지 확인할 수 있습니다.
+
+가격은 CoinGecko `simple/price` 를 요청 1회로 전 체인 조회합니다. 키 없이 동작하지만 429 가 보이면
+`COINGECKO_API_KEY` 에 무료 demo 키를 넣으세요.
+
+> ⚠️ **`total_assets_usd_value` 주의** — Aptos / Monad 의 `staked_amount` 는 아직 하드코딩된
+> 임의값입니다. 여기에 실제 가격이 곱해지므로 합산 총액의 대부분이 이 두 체인에서 나옵니다.
+> 실측 기준 라이브 5개 체인 합계는 약 $5M 인데 전체 합계는 약 $550M 으로 잡힙니다.
+> 어댑터를 붙이기 전까지는 이 수치를 대외 노출하지 않거나, static 체인을 합산에서 제외하세요.
 
 ### APR 계산식
 
@@ -134,7 +143,8 @@ npx vercel --prod
 
 ## 다음 작업
 
-- [ ] CoinGecko 가격/시총 연동 (`lib/snapshot.ts` 의 `tokenPrice`)
+- [x] CoinGecko 가격/시총 연동 (`lib/prices.ts`)
+- [ ] Aptos / Monad 하드코딩 위임량이 `total_assets_usd_value` 를 왜곡하는 문제 정리
 - [ ] Axelar `x/reward` 기반 APR 어댑터
 - [ ] Osmosis taker fee 반영한 APR 보정
 - [ ] Aptos 어댑터 — fullnode REST `/v1/accounts/{addr}/resource/0x1::stake::StakePool`

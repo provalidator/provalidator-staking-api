@@ -18,8 +18,10 @@ export interface ProjectStats {
   staked_amount_usd: number | null;
   delegators: number | null;
   market_cap: number | null;
-  /** live = 방금 체인에서 수집 / cached = 마지막 성공 스냅샷 / static = 하드코딩 폴백 */
+  /** 체인 데이터 출처. live = 방금 체인에서 수집 / cached = 마지막 성공 스냅샷 / static = 하드코딩 폴백 */
   source: 'live' | 'cached' | 'static';
+  /** 가격·시총 출처. 체인 데이터와 독립적으로 폴백됩니다 (CoinGecko 만 죽는 경우가 있음). */
+  price_source: 'live' | 'cached' | 'static';
   /** 이 체인 데이터가 실제로 수집된 시각 (unix seconds) */
   timestamp: number;
 }
