@@ -7,6 +7,8 @@
  *   COINGECKO_API_KEY=CG-xxxx        (무료 demo 키)
  *   COINGECKO_PRO_API_KEY=CG-xxxx    (유료 키 — 호스트가 pro-api 로 바뀝니다)
  */
+import { kvGet, kvSet } from './kv';
+
 const TIMEOUT_MS = 6_000;
 
 const proKey = process.env.COINGECKO_PRO_API_KEY;
@@ -21,12 +23,26 @@ export interface PriceQuote {
   usdMarketCap: number | null;
 }
 
-/** coingecko id → 시세. 실패하면 빈 객체를 반환합니다 (호출부가 폴백 처리). */
-export async function fetchPrices(
-  ids: string[],
-): Promise<Record<string, PriceQuote>> {
+export interface PriceResult {
+  quotes: Record<string, PriceQuote>;
+  /** true 면 CoinGecko 조회에 실패해서 마지막으로 성공한 시세를 쓰고 있다는 뜻입니다. */
+  stale: boolean;
+}
+
+/**
+ * 마지막으로 성공한 시세를 따로 보관합니다.
+ *
+ * 스냅샷 안에만 두면, CoinGecko 가 잠깐 실패했을 때 static 값으로 채워진 스냅샷이
+ * 저장되면서 멀쩡하던 캐시 시세를 덮어써 버립니다. 무료 티어는 rate limit 이 빡빡해서
+ * 이 상황이 실제로 발생합니다.
+ */
+const PRICE_CACHE_KEY = 'provalidator:prices:v1';
+const PRICE_CACHE_TTL_SECONDS = 86_400;
+
+/** coingecko id → 시세. 실패하면 마지막 성공 시세로 폴백합니다. */
+export async function fetchPrices(ids: string[]): Promise<PriceResult> {
   const unique = [...new Set(ids.filter(Boolean))];
-  if (unique.length === 0) return {};
+  if (unique.length === 0) return { quotes: {}, stale: false };
 
   const url =
     `${BASE_URL}/simple/price` +
@@ -60,10 +76,14 @@ export async function fetchPrices(
           typeof cap === 'number' && Number.isFinite(cap) && cap > 0 ? cap : null,
       };
     }
-    return quotes;
+    if (Object.keys(quotes).length === 0) throw new Error('no usable quotes');
+
+    await kvSet(PRICE_CACHE_KEY, quotes, PRICE_CACHE_TTL_SECONDS);
+    return { quotes, stale: false };
   } catch (error) {
     console.error('CoinGecko fetch failed:', error);
-    return {};
+    const cached = await kvGet<Record<string, PriceQuote>>(PRICE_CACHE_KEY);
+    return { quotes: cached ?? {}, stale: true };
   } finally {
     clearTimeout(timer);
   }

@@ -70,7 +70,12 @@ export async function buildSnapshot(): Promise<Snapshot> {
     toProjectStats(
       chain,
       resolveChainStats(chain, liveResults[index], previous),
-      resolvePrice(chain, prices[chain.coingeckoId ?? ''], previous),
+      resolvePrice(
+        chain,
+        prices.quotes[chain.coingeckoId ?? ''],
+        prices.stale,
+        previous,
+      ),
       now,
     ),
   );
@@ -115,6 +120,7 @@ function resolveChainStats(
 function resolvePrice(
   chain: ChainConfig,
   quote: PriceQuote | undefined,
+  quotesAreStale: boolean,
   previous: Snapshot | null,
 ): Resolved<PriceValue> {
   const fallback = staticOf(chain);
@@ -125,12 +131,17 @@ function resolvePrice(
         price: quote.usd,
         marketCap: quote.usdMarketCap ?? fallback?.market_cap ?? null,
       },
-      source: 'live',
+      source: quotesAreStale ? 'cached' : 'live',
     };
   }
 
   const cached = previous?.projects[chain.id];
-  if (cached?.token_price && cached.price_source === 'live') {
+  // 'cached' 도 받아줍니다. 'live' 만 받으면 한 번 static 으로 떨어진 순간
+  // 이 경로가 영영 막혀서 CoinGecko 가 복구될 때까지 static 에 갇힙니다.
+  if (
+    cached?.token_price &&
+    (cached.price_source === 'live' || cached.price_source === 'cached')
+  ) {
     return {
       value: { price: cached.token_price, marketCap: cached.market_cap },
       source: 'cached',
