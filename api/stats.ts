@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { findChain } from '../lib/chains';
 import { applyCors } from '../lib/cors';
+import { kvEnabled, kvGet, kvSet } from '../lib/kv';
 import { buildSnapshot, computeGlobalStats } from '../lib/snapshot';
 import type { Snapshot } from '../lib/types';
 
@@ -35,6 +36,14 @@ export default async function handler(
   }
 
   const endpoint = first(req.query.endpoint) || 'chain_stats';
+
+  // 진단용. KV 가 실제로 붙었는지 확인합니다 (환경변수만 보는 게 아니라 왕복 테스트).
+  if (endpoint === 'health') {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json({ message: 'Success', data: await checkKv() });
+    return;
+  }
+
   // PHP 버전은 `chain_id` 를 썼지만 실제로는 토큰 심볼이었습니다. 둘 다 받습니다.
   const chainQuery = first(req.query.token) || first(req.query.chain_id);
 
@@ -89,10 +98,34 @@ export default async function handler(
       res.status(400).json({
         message: 'Error',
         error:
-          "Invalid endpoint. Supported: 'chains', 'chain_stats', 'global_stats'.",
+          "Invalid endpoint. Supported: 'chains', 'chain_stats', 'global_stats', 'health'.",
       });
     }
   }
+}
+
+/** 환경변수 존재 여부가 아니라 실제 쓰기·읽기 왕복으로 KV 연결을 확인합니다. */
+async function checkKv() {
+  if (!kvEnabled) {
+    return {
+      kv_configured: false,
+      kv_working: false,
+      hint: 'KV_REST_API_URL / KV_REST_API_TOKEN 이 없습니다. Upstash 연결 후 재배포가 필요합니다.',
+    };
+  }
+
+  const probeKey = 'provalidator:health-probe';
+  const token = String(Math.floor(Date.now() / 1000));
+  await kvSet(probeKey, token, 60);
+  const readBack = await kvGet<string>(probeKey);
+
+  return {
+    kv_configured: true,
+    kv_working: readBack === token,
+    snapshot_cached: (await kvGet<unknown>('provalidator:snapshot:v1')) !== null,
+    axelar_chain_count_cached:
+      (await kvGet<number>('provalidator:axelar:maintained:v1')) ?? null,
+  };
 }
 
 function send(res: VercelResponse, status: number, body: unknown): void {

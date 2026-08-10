@@ -29,6 +29,7 @@ Vercel 서버리스 함수의 파일시스템은 읽기 전용이고, `/tmp` 는
 | `?endpoint=chains` | **신규.** 전체 체인 + 글로벌 스탯을 한 번에 |
 | `?endpoint=chain_stats&token=ATOM` | 체인 1개 (`chain_id=ATOM` 도 동일하게 동작) |
 | `?endpoint=global_stats` | 합산 스탯 (하드코딩 아님 — 체인 데이터에서 계산) |
+| `?endpoint=health` | 진단용. KV 연결 상태를 왕복 테스트로 확인 (캐시 안 함) |
 
 Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 바꾸는 걸 권장합니다.
 
