@@ -118,11 +118,21 @@ Monad 는 보상률을 온체인에 노출하지 않아 APR 은 static 폴백입
 
 Osmosis 는 epoch 기반 mint 모듈이라 별도 경로를 씁니다 (`epoch_provisions × 365 × staking 비율`).
 
+**Axelar 는 `x/mint` 를 쓰지 않습니다** (`annual_provisions` 가 항상 0). 보상이 `x/reward` 모듈에서
+나오고, 인플레이션이 **밸리데이터가 유지하는 EVM 체인 수**에 비례합니다:
+
+```
+inflation = base + base × key_mgmt_relative_rate
+                 + external_chain_voting_rate × 유지 중인 EVM 체인 수
+```
+
+즉 같은 Axelar 라도 밸리데이터마다 APR 이 다릅니다. 현재 프로발리데이터는 EVM 체인 20개를
+전부 유지 중이고 `external_chain_voting_inflation_rate` 가 0.002 이므로 인플레이션은 4% 입니다.
+체인 수 집계는 체인마다 maintainer 목록을 받아야 해서 요청이 20회쯤 발생하는데, 거의 안 바뀌는
+값이라 KV 에 6시간 캐시합니다 (KV 가 없으면 매 스냅샷마다 조회합니다).
+
 ### 알려진 한계 (실측 확인됨)
 
-- **Axelar** — `x/mint` 의 `annual_provisions` 가 항상 `0` 입니다. Axelar 보상은 `x/reward` 모듈에서
-  나오기 때문입니다. 현재는 APR 만 static(12.7%)으로 폴백하고 커미션·위임량·위임자 수는 라이브입니다.
-  정확한 값이 필요하면 `x/reward` 전용 어댑터가 필요합니다.
 - **Osmosis** — mint 기반 계산은 약 1.8% 로 나옵니다. Osmosis 는 taker fee 도 스테이커에게 분배하는데
   이 공식에는 잡히지 않아 **과소 추정**입니다. 실 수치가 중요하면 별도 보정이 필요합니다.
 - **AtomOne** — 약 47% 로 나옵니다 (인플레 20% + 낮은 본딩 비율). distribution 파라미터에
@@ -171,6 +181,6 @@ npx vercel --prod
 - [x] CoinGecko 가격/시총 연동 (`lib/prices.ts`)
 - [x] Aptos 어댑터 (`lib/aptos.ts`)
 - [x] Monad 어댑터 (`lib/monad.ts`)
-- [ ] Axelar `x/reward` 기반 APR 어댑터
+- [x] Axelar `x/reward` 기반 APR
 - [ ] Osmosis taker fee 반영한 APR 보정
 - [ ] Monad APR — 온체인 소스가 없어 현재 static 폴백

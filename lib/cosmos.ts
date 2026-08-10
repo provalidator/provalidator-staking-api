@@ -1,4 +1,5 @@
 import type { CosmosChain } from './chains';
+import { kvGet, kvSet } from './kv';
 import { Lcd, num } from './lcd';
 import type { LiveStats } from './types';
 
@@ -71,11 +72,17 @@ export async function fetchCosmosStats(chain: CosmosChain): Promise<LiveStats> {
   };
 }
 
+/** 유지 중인 EVM 체인 수는 거의 안 바뀌므로 스냅샷보다 훨씬 길게 캐시합니다. */
+const AXELAR_MAINTAINED_KEY = 'provalidator:axelar:maintained:v1';
+const AXELAR_MAINTAINED_TTL_SECONDS = 21_600; // 6h
+
 async function fetchAnnualProvisions(
   lcd: Lcd,
   chain: CosmosChain,
 ): Promise<AnnualProvisions | null> {
   if (chain.aprStrategy === 'none') return null;
+
+  if (chain.aprStrategy === 'axelar') return fetchAxelarProvisions(lcd, chain);
 
   if (chain.aprStrategy === 'osmosis') {
     const [epoch, params] = await Promise.all([
@@ -117,6 +124,88 @@ async function fetchAnnualProvisions(
   if (!inflation || !supply) return null;
 
   return { amount: inflation * supply, applyCommunityTax: true };
+}
+
+/**
+ * Axelar 는 x/mint 를 쓰지 않습니다 (annual_provisions 가 항상 0).
+ * 보상은 x/reward 모듈에서 나오고, 인플레이션이 **밸리데이터가 유지하는 EVM 체인 수**에
+ * 비례합니다:
+ *
+ *   inflation = base + (base × key_mgmt_relative_rate)
+ *                    + (external_chain_voting_rate × 유지 중인 EVM 체인 수)
+ *   annual_provisions = inflation × 총 발행량
+ *
+ * 즉 같은 체인이라도 밸리데이터마다 APR 이 다릅니다.
+ */
+async function fetchAxelarProvisions(
+  lcd: Lcd,
+  chain: CosmosChain,
+): Promise<AnnualProvisions | null> {
+  const [rewardParams, inflationRes, supplyRes, maintained] = await Promise.all([
+    lcd.tryGet<{
+      params: {
+        external_chain_voting_inflation_rate: string;
+        key_mgmt_relative_inflation_rate: string;
+      };
+    }>('/axelar/reward/v1beta1/params'),
+    lcd.tryGet<{ inflation: string }>('/cosmos/mint/v1beta1/inflation'),
+    lcd.tryGet<{ amount: { amount: string } }>(
+      `/cosmos/bank/v1beta1/supply/by_denom?denom=${encodeURIComponent(chain.denom)}`,
+    ),
+    countMaintainedEvmChains(lcd, chain),
+  ]);
+
+  const supply = supplyRes ? num(supplyRes.amount.amount) : null;
+  const votingRate = rewardParams
+    ? num(rewardParams.params.external_chain_voting_inflation_rate)
+    : null;
+  if (!supply || votingRate === null || !maintained) return null;
+
+  const base = (inflationRes ? num(inflationRes.inflation) : 0) ?? 0;
+  const keyMgmtRate = rewardParams
+    ? (num(rewardParams.params.key_mgmt_relative_inflation_rate) ?? 0)
+    : 0;
+
+  const inflation = base + base * keyMgmtRate + votingRate * maintained;
+  if (inflation <= 0) return null;
+
+  return { amount: inflation * supply, applyCommunityTax: true };
+}
+
+/**
+ * 이 밸리데이터가 유지 중인 EVM 체인 수.
+ *
+ * 체인별로 maintainer 목록을 따로 받아야 해서 요청이 20회쯤 발생합니다.
+ * 자주 바뀌는 값이 아니므로 KV 에 6시간 캐시합니다 (KV 가 없으면 매번 조회).
+ */
+async function countMaintainedEvmChains(
+  lcd: Lcd,
+  chain: CosmosChain,
+): Promise<number | null> {
+  const cached = await kvGet<number>(AXELAR_MAINTAINED_KEY);
+  if (typeof cached === 'number' && cached > 0) return cached;
+
+  const evmChains = await lcd.tryGet<{ chains: string[] }>(
+    '/axelar/evm/v1beta1/chains',
+  );
+  if (!evmChains?.chains?.length) return null;
+
+  const maintainerLists = await Promise.all(
+    evmChains.chains.map((name) =>
+      lcd.tryGet<{ maintainers: string[] }>(
+        `/axelar/nexus/v1beta1/chain_maintainers/${encodeURIComponent(name)}`,
+      ),
+    ),
+  );
+
+  let count = 0;
+  for (const list of maintainerLists) {
+    if (list?.maintainers?.includes(chain.valoper)) count++;
+  }
+  if (count > 0) {
+    await kvSet(AXELAR_MAINTAINED_KEY, count, AXELAR_MAINTAINED_TTL_SECONDS);
+  }
+  return count;
 }
 
 /**

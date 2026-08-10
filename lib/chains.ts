@@ -4,9 +4,10 @@ import type { StaticStats } from './types';
  * APR 계산 전략.
  * - 'mint'    : 표준 x/mint 모듈 (annual_provisions 또는 inflation × supply)
  * - 'osmosis' : Osmosis epoch 기반 mint 모듈
+ * - 'axelar'  : x/reward 모듈 — 밸리데이터가 유지하는 EVM 체인 수에 비례
  * - 'none'    : 인플레이션 기반 보상이 없음 → static 값 사용
  */
-export type AprStrategy = 'mint' | 'osmosis' | 'none';
+export type AprStrategy = 'mint' | 'osmosis' | 'axelar' | 'none';
 
 interface BaseChain {
   id: string;
@@ -144,7 +145,7 @@ export const CHAINS: ChainConfig[] = [
     valoper: 'axelarvaloper1u3asfwr2q0xhshj88sq4yvh89qluunefh270lz',
     denom: 'uaxl',
     exponent: 6,
-    aprStrategy: 'mint',
+    aprStrategy: 'axelar',
     rest: resolveRest('axelar', [
       'https://axelar-api.polkachu.com',
       'https://axelar-rest.publicnode.com',
