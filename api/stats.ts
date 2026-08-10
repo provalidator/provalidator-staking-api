@@ -44,8 +44,10 @@ export default async function handler(
     return;
   }
 
-  // PHP 버전은 `chain_id` 를 썼지만 실제로는 토큰 심볼이었습니다. 둘 다 받습니다.
-  const chainQuery = first(req.query.token) || first(req.query.chain_id);
+  // PHP 버전은 `chain_id` 를 썼지만 실제로는 토큰 심볼이었습니다.
+  // `chain` 도 자연스럽게 손이 가는 이름이라 별칭으로 받습니다.
+  const chainQuery =
+    first(req.query.token) || first(req.query.chain_id) || first(req.query.chain);
 
   let snapshot: Snapshot;
   try {
@@ -84,7 +86,9 @@ export default async function handler(
         res.setHeader('Cache-Control', 'public, s-maxage=30');
         res.status(404).json({
           message: 'Error',
-          error: `Token or chain '${chainQuery}' not found.`,
+          error: chainQuery
+            ? `Token or chain '${chainQuery}' not found.`
+            : "Missing token. Use ?endpoint=chain_stats&token=ATOM (aliases: chain_id, chain), or ?endpoint=chains for all chains.",
           supported: Object.values(snapshot.projects).map((p) => p.token),
         });
         return;
