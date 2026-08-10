@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 20
+    }
+  },
+  "rewrites": [
+    { "source": "/provalidator_info_api.php", "destination": "/api/stats" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "provalidator-staking-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ProValidator staking stats API (Vercel Functions)",
+  "scripts": {
+    "dev": "vercel dev",
+    "typecheck": "tsc --noEmit",
+    "build:scripts": "tsc scripts/probe.ts scripts/serve.ts --outDir .tmp --module commonjs --target ES2022 --moduleResolution node --esModuleInterop --skipLibCheck --lib ES2022,DOM",
+    "probe": "npm run build:scripts && node .tmp/scripts/probe.js",
+    "serve": "npm run build:scripts && node .tmp/scripts/serve.js"
+  },
+  "devDependencies": {
+    "@vercel/node": "^5.1.0",
+    "typescript": "^5.7.3"
+  }
+}
