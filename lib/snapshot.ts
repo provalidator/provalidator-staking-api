@@ -208,7 +208,7 @@ function toProjectStats(
   // 자산은 "그 네트워크의 기준 APR(커미션 차감 전)" 입니다.
   // 내부에서는 소수(0.1479)로 다루고 출력할 때만 백분율로 바꿉니다.
   const aprRatio = isAsset ? networkApr : (stats.value.apr ?? fallback?.apr ?? null);
-  const aprPercent = aprRatio === null ? null : round(aprRatio * 100, 4);
+  const aprPercent = aprRatio === null ? null : round(aprRatio * 100, 2);
   const fees = isAsset ? null : (stats.value.fees ?? fallback?.fees ?? null);
   const staked = isAsset
     ? null

@@ -36,7 +36,7 @@ Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 �
 ### PHP 버전과 달라진 점
 
 - 모든 수치가 **문자열이 아니라 number**
-- `apr` 과 `apr_percent` 는 **둘 다 백분율**(`14.5` = 14.5%). 프론트가 `apr` 을 그대로 % 로 쓰기 때문입니다
+- `apr` 과 `apr_percent` 는 **둘 다 백분율, 소수점 2자리**(`14.5` = 14.5%). 프론트가 `apr` 을 그대로 % 로 쓰기 때문입니다
 - `global_stats` 는 체인 데이터에서 합산 계산
 - 응답에 `source` / `price_source` 필드 추가: `live` | `cached` | `static`
 - `chain_id` → `token` 으로 이름 정리 (구 파라미터도 계속 동작)
