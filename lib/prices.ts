@@ -21,6 +21,8 @@ const BASE_URL = proKey
 export interface PriceQuote {
   usd: number;
   usdMarketCap: number | null;
+  /** CoinGecko 가 호스팅하는 토큰 로고 URL */
+  logo: string | null;
 }
 
 export interface PriceResult {
@@ -44,10 +46,11 @@ export async function fetchPrices(ids: string[]): Promise<PriceResult> {
   const unique = [...new Set(ids.filter(Boolean))];
   if (unique.length === 0) return { quotes: {}, stale: false };
 
+  // simple/price 대신 coins/markets 를 씁니다 — 같은 요청 1회로 로고 URL 까지 옵니다.
   const url =
-    `${BASE_URL}/simple/price` +
-    `?ids=${encodeURIComponent(unique.join(','))}` +
-    '&vs_currencies=usd&include_market_cap=true';
+    `${BASE_URL}/coins/markets` +
+    `?vs_currency=usd&ids=${encodeURIComponent(unique.join(','))}` +
+    `&per_page=${unique.length}&page=1&sparkline=false`;
 
   const headers: Record<string, string> = { accept: 'application/json' };
   if (proKey) headers['x-cg-pro-api-key'] = proKey;
@@ -58,22 +61,26 @@ export async function fetchPrices(ids: string[]): Promise<PriceResult> {
   try {
     const res = await fetch(url, { headers, signal: controller.signal });
     if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`);
-    const body = (await res.json()) as Record<
-      string,
-      { usd?: number; usd_market_cap?: number }
-    >;
+    const body = (await res.json()) as Array<{
+      id: string;
+      current_price?: number;
+      market_cap?: number;
+      image?: string;
+    }>;
+    if (!Array.isArray(body)) throw new Error('unexpected CoinGecko payload');
 
     const quotes: Record<string, PriceQuote> = {};
-    for (const [id, entry] of Object.entries(body)) {
+    for (const entry of body) {
+      const price = entry.current_price;
       // 0 이나 누락은 유효한 시세가 아니므로 폴백으로 넘깁니다.
-      if (typeof entry.usd !== 'number' || !Number.isFinite(entry.usd) || entry.usd <= 0) {
-        continue;
-      }
-      const cap = entry.usd_market_cap;
-      quotes[id] = {
-        usd: entry.usd,
+      if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) continue;
+
+      const cap = entry.market_cap;
+      quotes[entry.id] = {
+        usd: price,
         usdMarketCap:
           typeof cap === 'number' && Number.isFinite(cap) && cap > 0 ? cap : null,
+        logo: entry.image ?? null,
       };
     }
     if (Object.keys(quotes).length === 0) throw new Error('no usable quotes');

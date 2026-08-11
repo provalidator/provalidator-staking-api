@@ -3,6 +3,7 @@ import { CHAINS, type ChainConfig, staticOf } from './chains';
 import { fetchCosmosStats } from './cosmos';
 import { fetchMonadStats } from './monad';
 import { kvGet, kvSet } from './kv';
+import { fetchNetworkAprs } from './networks';
 import { fetchPrices, type PriceQuote } from './prices';
 import type {
   DataSource,
@@ -25,6 +26,7 @@ interface Resolved<T> {
 interface PriceValue {
   price: number | null;
   marketCap: number | null;
+  logo: string | null;
 }
 
 /**
@@ -60,10 +62,16 @@ export async function buildSnapshot(): Promise<Snapshot> {
     }
   });
 
-  const [previous, prices, liveResults] = await Promise.all([
+  // 우리가 운영하지 않는 자산의 네트워크 기준 APR (Solana, Ethereum, ZetaChain 등)
+  const networkAprPromise = fetchNetworkAprs(
+    CHAINS.filter((c) => c.kind === 'asset'),
+  );
+
+  const [previous, prices, liveResults, networkAprs] = await Promise.all([
     previousPromise,
     pricesPromise,
     Promise.all(livePromises),
+    networkAprPromise,
   ]);
 
   const projects = CHAINS.map((chain, index) =>
@@ -76,6 +84,7 @@ export async function buildSnapshot(): Promise<Snapshot> {
         prices.stale,
         previous,
       ),
+      networkAprs[chain.id] ?? null,
       now,
     ),
   );
@@ -130,6 +139,7 @@ function resolvePrice(
       value: {
         price: quote.usd,
         marketCap: quote.usdMarketCap ?? fallback?.market_cap ?? null,
+        logo: quote.logo,
       },
       source: quotesAreStale ? 'cached' : 'live',
     };
@@ -143,33 +153,44 @@ function resolvePrice(
     (cached.price_source === 'live' || cached.price_source === 'cached')
   ) {
     return {
-      value: { price: cached.token_price, marketCap: cached.market_cap },
+      value: {
+        price: cached.token_price,
+        marketCap: cached.market_cap,
+        logo: cached.logo,
+      },
       source: 'cached',
     };
   }
 
   if (fallback) {
     return {
-      value: { price: fallback.token_price, marketCap: fallback.market_cap },
+      value: {
+        price: fallback.token_price,
+        marketCap: fallback.market_cap,
+        logo: previous?.projects[chain.id]?.logo ?? null,
+      },
       source: 'static',
     };
   }
 
-  // CoinGecko 미등재 자산 (NOBL, IP). 가짜 값을 만들지 않고 null 로 둡니다.
-  return { value: { price: null, marketCap: null }, source: 'none' };
+  // CoinGecko 미등재 자산 (NOBL). 가짜 값을 만들지 않고 null 로 둡니다.
+  return { value: { price: null, marketCap: null, logo: null }, source: 'none' };
 }
 
 function toProjectStats(
   chain: ChainConfig,
   stats: Resolved<LiveStats>,
   price: Resolved<PriceValue>,
+  networkApr: number | null,
   timestamp: number,
 ): ProjectStats {
   const isAsset = chain.kind === 'asset';
   const fallback = staticOf(chain);
   const tokenPrice = price.value.price;
 
-  const apr = isAsset ? null : (stats.value.apr ?? fallback?.apr ?? null);
+  // 밸리데이터 체인은 "우리에게 위임했을 때의 순 APR",
+  // 자산은 "그 네트워크의 기준 APR(커미션 차감 전)" 입니다.
+  const apr = isAsset ? networkApr : (stats.value.apr ?? fallback?.apr ?? null);
   const fees = isAsset ? null : (stats.value.fees ?? fallback?.fees ?? null);
   const staked = isAsset
     ? null
@@ -180,6 +201,7 @@ function toProjectStats(
     project_title: chain.projectTitle,
     token: chain.token,
     type: isAsset ? 'asset' : 'validator',
+    logo: price.value.logo,
     fees: round(fees, 4),
     apr: round(apr, 6),
     apr_percent: apr === null ? null : round(apr * 100, 4),

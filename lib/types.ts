@@ -21,6 +21,8 @@ export interface ProjectStats {
   fees: number | null;
   apr: number | null;
   apr_percent: number | null;
+  /** CoinGecko 로고 URL. 프론트에서 아이콘을 직접 관리하지 않아도 됩니다. */
+  logo: string | null;
   token_price: number | null;
   staked_amount: number | null;
   staked_amount_usd: number | null;

@@ -1,3 +1,4 @@
+import type { NetworkAprSource } from './networks';
 import type { StaticStats } from './types';
 
 /**
@@ -60,6 +61,12 @@ export interface MonadChain extends ValidatorChain {
  */
 export interface AssetConfig extends BaseChain {
   kind: 'asset';
+  /** 네트워크 기준 APR 계산 방식. 없으면 apr 은 null 입니다. */
+  networkApr?: NetworkAprSource;
+  /** cosmos-mint / zetachain 소스에서 쓰는 LCD 엔드포인트 */
+  rest?: string[];
+  /** 심볼이 바뀐 자산의 예전 심볼 등, findChain 에서 함께 매칭할 값 */
+  aliases?: string[];
 }
 
 export type ChainConfig = CosmosChain | AptosChain | MonadChain | AssetConfig;
@@ -74,8 +81,9 @@ function asset(
   projectTitle: string,
   token: string,
   coingeckoId?: string,
+  extra: Omit<AssetConfig, 'kind' | 'id' | 'projectTitle' | 'token' | 'coingeckoId'> = {},
 ): AssetConfig {
-  return { kind: 'asset', id, projectTitle, token, coingeckoId };
+  return { kind: 'asset', id, projectTitle, token, coingeckoId, ...extra };
 }
 
 /**
@@ -263,19 +271,33 @@ export const CHAINS: ChainConfig[] = [
 
   // ---- 아래부터는 밸리데이터를 운영하지 않는 자산입니다 (가격·시총만) ----
   // CoinGecko id 는 실제 조회로 심볼까지 검증했습니다.
-  asset('zetachain', 'Zetachain', 'ZETA', 'zetachain'),
-  asset('persistence', 'Persistence', 'XPRT', 'persistence'),
+  asset('zetachain', 'Zetachain', 'ZETA', 'zetachain', {
+    networkApr: 'zetachain',
+    rest: ['https://zetachain-api.polkachu.com', 'https://rest.cosmos.directory/zetachain'],
+  }),
+  asset('persistence', 'Persistence', 'XPRT', 'persistence', {
+    networkApr: 'cosmos-mint',
+    rest: [
+      'https://persistence-api.polkachu.com',
+      'https://rest.cosmos.directory/persistence',
+    ],
+  }),
   asset('nillion', 'Nillion', 'NIL', 'nillion'),
-  // Noble 은 거버넌스 토큰이 CoinGecko 에 없습니다 (검색 결과가 브릿지된 USDC 뿐).
+  // Noble 은 퍼미션드 밸리데이터 셋이라 공개 스테이킹이 없고(bonded 8 토큰),
+  // 거버넌스 토큰도 CoinGecko 미등재입니다 (검색 결과가 브릿지된 USDC 뿐).
   asset('noble', 'Noble', 'NOBL'),
   asset('ssv', 'SSV Network', 'SSV', 'ssv-network'),
   asset('bitcoin', 'Bitcoin', 'BTC', 'bitcoin'),
-  asset('ethereum', 'Ethereum', 'ETH', 'ethereum'),
-  asset('solana', 'Solana', 'SOL', 'solana'),
+  asset('ethereum', 'Ethereum', 'ETH', 'ethereum', { networkApr: 'ethereum' }),
+  asset('solana', 'Solana', 'SOL', 'solana', { networkApr: 'solana' }),
   asset('usdc', 'USD Coin', 'USDC', 'usd-coin'),
-  asset('hyperliquid', 'Hyperliquid', 'HYPE', 'hyperliquid'),
-  // Story(IP) 도 CoinGecko 미등재입니다. 'story-2' 는 심볼이 DATA 인 다른 자산입니다.
-  asset('story', 'Story', 'IP'),
+  asset('hyperliquid', 'Hyperliquid', 'HYPE', 'hyperliquid', {
+    networkApr: 'hyperliquid',
+  }),
+  // Story Protocol 은 Data Network 로, 심볼은 IP -> DATA 로 바뀌었습니다.
+  // 기존 사이트가 아직 IP 로 조회하므로 별칭으로 계속 받아줍니다.
+  asset('story', 'Data Network', 'DATA', 'story-2', { aliases: ['IP', 'story'] }),
+  // dYdX 보상은 인플레이션이 아니라 거래 수수료(USDC) 분배라 체인 파라미터로 산출할 수 없습니다.
   asset('dydx', 'dYdX', 'DYDX', 'dydx-chain'),
 ];
 
@@ -288,6 +310,10 @@ export function findChain(query: string): ChainConfig | undefined {
   return (
     CHAINS_BY_ID.get(q) ??
     CHAINS.find((c) => c.token.toLowerCase() === q) ??
-    CHAINS.find((c) => c.projectTitle.toLowerCase() === q)
+    CHAINS.find((c) => c.projectTitle.toLowerCase() === q) ??
+    // 심볼이 바뀐 자산의 예전 이름 (예: Story 의 IP -> DATA)
+    CHAINS.find(
+      (c) => c.kind === 'asset' && c.aliases?.some((a) => a.toLowerCase() === q),
+    )
   );
 }

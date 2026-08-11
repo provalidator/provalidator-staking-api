@@ -52,6 +52,7 @@ Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 �
       "project_title": "Cosmos Hub",
       "token": "ATOM",
       "type": "validator",
+      "logo": "https://coin-images.coingecko.com/coins/images/1481/large/cosmos_hub.png",
       "fees": 5.0,
       "apr": 0.1421,
       "apr_percent": 14.21,
@@ -80,17 +81,60 @@ Framer 가 체인마다 호출하고 있다면 `endpoint=chains` 한 번으로 �
 | Aptos | **live** (커미션, 위임량, 순 APR) | **live** (CoinGecko) |
 | Monad | **live** (커미션, 위임량) | **live** (CoinGecko) |
 
-**`type: "asset"` — 밸리데이터를 운영하지 않고 가격만 추적하는 12개 자산**
+**`type: "asset"` — 밸리데이터를 운영하지 않고 추적만 하는 12개 자산**
 
-ZETA · XPRT · NIL · NOBL · SSV · BTC · ETH · SOL · USDC · HYPE · IP · DYDX
+ZETA · XPRT · NIL · NOBL · SSV · BTC · ETH · SOL · USDC · HYPE · DATA · DYDX
 
-스테이킹 지표(`fees` `apr` `staked_amount` `delegators`)는 전부 `null` 이고
+`staked_amount` `delegators` `fees` 는 전부 `null` 이고
 `total_assets_usd_value` / `total_delegators` / `total_chains` 합산에도 들어가지 않습니다.
 즉 글로벌 스탯은 항상 "우리가 실제로 운영하는 밸리데이터"만 집계합니다.
 
-> **NOBL 과 IP 는 가격도 `null` 입니다.** 둘 다 CoinGecko 미등재라서요.
-> (Noble 검색은 브릿지된 USDC 만 나오고, `story-2` 는 심볼이 `DATA` 인 다른 자산입니다.)
+`apr` 의 의미는 `type` 에 따라 다릅니다:
+
+| `type` | `apr` 의미 |
+|---|---|
+| `validator` | **프로발리데이터에게 위임했을 때의 순 APR** (커미션 차감 후) |
+| `asset` | **그 네트워크의 기준 APR** (커미션 차감 전) |
+
+### 네트워크 APR 산출 (`lib/networks.ts`)
+
+체인마다 보상 구조가 전혀 달라서 소스별로 따로 계산합니다. 결과는 KV 에 10분 캐시합니다.
+
+| 자산 | 방식 | 실측값 |
+|---|---|---|
+| **SOL** | `getInflationRate` × 총 발행량 ÷ 총 활성 스테이크 (Solana RPC) | 5.38% |
+| **ETH** | `64 × 연간 에포크 수 ÷ √(총 유효잔고)` — 컨센서스 스펙 공식 | 2.57% |
+| **ZETA** | `x/emissions` 의 블록 보상 × `validator_emission_percentage` × 연간 블록 수 ÷ 본딩량 | 8.52% |
+| **XPRT** | 표준 `x/mint` (`annual_provisions × (1-community_tax) ÷ bonded`) | 23.42% |
+| **HYPE** | 공식 문서 앵커(400M 스테이크 = 2.37%)와 `1/√(총 스테이크)` 비례 관계 | 2.27% |
+
+- **ETH** 는 발행(issuance) 기준이며 MEV·팁은 제외입니다. 자체 계산값이
+  ultrasound.money 가 보고하는 issuance APR 과 소수점 3자리까지 일치하는 것을 확인했습니다.
+- **ZETA** 는 블록 시간이 고정값이 아니라서 최근 블록 2,000개 간격으로 실측해 환산합니다.
+- **HYPE** 만 온체인 파라미터가 아니라 **문서에 명시된 기준값**에서 환산한 값입니다.
+  Hyperliquid 는 보상률 공식을 공개하지 않고 앵커 하나만 제시합니다.
+
+**APR 을 낼 수 없는 자산** — `apr: null` 로 나갑니다.
+
+| 자산 | 이유 |
+|---|---|
+| DYDX | 보상이 인플레이션이 아니라 **거래 수수료(USDC) 분배** |
+| NOBL | 퍼미션드 밸리데이터 셋, 공개 스테이킹 없음 (bonded 8 토큰) |
+| DATA | 공개 Cosmos REST 엔드포인트가 없음 (EVM RPC 만 동작) |
+| BTC · USDC | 스테이킹 개념 자체가 없음 |
+| NIL · SSV | 아직 미조사 |
+
+> **Story Protocol 은 Data Network 로 리브랜딩되어 심볼이 `IP` → `DATA` 로 바뀌었습니다.**
+> 기존 사이트가 아직 `IP` 로 조회하므로 별칭으로 계속 받아줍니다 (`?chain=IP` 동작).
+>
+> **NOBL 은 가격도 `null` 입니다** — CoinGecko 미등재라서요 (검색 결과가 브릿지된 USDC 뿐).
 > 등재되면 `lib/chains.ts` 에 `coingeckoId` 만 채우면 됩니다.
+
+### 로고
+
+응답의 `logo` 필드에 CoinGecko 가 호스팅하는 토큰 로고 URL 이 들어갑니다.
+가격 조회를 `simple/price` 에서 `coins/markets` 로 바꿔 **요청 추가 없이** 함께 받아옵니다.
+프론트에서 아이콘을 따로 관리하지 않아도 되고, 리브랜딩되면 자동으로 반영됩니다.
 
 체인 데이터와 가격은 **서로 독립적으로 폴백**합니다. CoinGecko 만 죽어도 체인 수치는 라이브로 나가고,
 반대도 마찬가지입니다. 응답의 `source` / `price_source` 필드로 각각 어디서 왔는지 확인할 수 있습니다.
