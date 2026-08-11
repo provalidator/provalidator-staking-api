@@ -84,7 +84,7 @@ export async function buildSnapshot(): Promise<Snapshot> {
         prices.stale,
         previous,
       ),
-      networkAprs[chain.id] ?? null,
+      networkAprs[chain.id] ?? previousAssetApr(chain, previous),
       now,
     ),
   );
@@ -101,6 +101,20 @@ export async function buildSnapshot(): Promise<Snapshot> {
   if (hasLive) await kvSet(SNAPSHOT_KEY, snapshot, SNAPSHOT_TTL_SECONDS);
 
   return snapshot;
+}
+
+/**
+ * 네트워크 APR 이 이번 라운드에 안 잡혔을 때 쓰는 2차 폴백.
+ * KV 안에서 이미 한 번 폴백하지만, KV 자체가 비활성이거나 비어 있을 수 있습니다.
+ * 응답의 apr 은 백분율이므로 내부 단위(소수)로 되돌려서 넘깁니다.
+ */
+function previousAssetApr(
+  chain: ChainConfig,
+  previous: Snapshot | null,
+): number | null {
+  if (chain.kind !== 'asset') return null;
+  const cached = previous?.projects[chain.id];
+  return cached?.apr ? cached.apr / 100 : null;
 }
 
 function resolveChainStats(

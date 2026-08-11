@@ -19,9 +19,22 @@ export type NetworkAprSource =
 const SECONDS_PER_YEAR = 31_536_000;
 const TIMEOUT_MS = 8_000;
 
-/** 네트워크 APR 은 분 단위로 흔들리지 않으므로 스냅샷보다 길게 캐시합니다. */
-const CACHE_KEY = 'provalidator:network-apr:v1';
-const CACHE_TTL_SECONDS = 600; // 10m
+/**
+ * 네트워크 APR 캐시.
+ *
+ * 값 자체는 하루 넘게 보관하고(`TTL`), 그중 `FRESH` 보다 오래된 것만 다시 계산합니다.
+ * 재계산이 실패해도 **직전 성공값을 그대로 유지**하는 게 핵심입니다.
+ * 예전에는 실패하면 키가 사라져서 apr 이 간헐적으로 null 로 튀었습니다
+ * (Solana 의 getVoteAccounts 는 밸리데이터 수백 개를 다 받아와 타임아웃이 잦습니다).
+ */
+const CACHE_KEY = 'provalidator:network-apr:v2';
+const CACHE_TTL_SECONDS = 86_400;
+const FRESH_SECONDS = 600;
+
+interface AprCache {
+  aprs: Record<string, number>;
+  computedAt: number;
+}
 
 /** asset id → 네트워크 APR(소수). 계산 불가한 자산은 키가 없습니다. */
 export async function fetchNetworkAprs(
@@ -30,8 +43,13 @@ export async function fetchNetworkAprs(
   const targets = assets.filter((a) => a.networkApr);
   if (targets.length === 0) return {};
 
-  const cached = await kvGet<Record<string, number>>(CACHE_KEY);
-  if (cached && Object.keys(cached).length > 0) return cached;
+  const now = Math.floor(Date.now() / 1000);
+  const cached = await kvGet<AprCache>(CACHE_KEY);
+  const known = cached?.aprs ?? {};
+
+  const isFresh =
+    cached && now - cached.computedAt < FRESH_SECONDS && Object.keys(known).length > 0;
+  if (isFresh) return known;
 
   const results = await Promise.all(
     targets.map(async (asset) => {
@@ -45,9 +63,12 @@ export async function fetchNetworkAprs(
     }),
   );
 
-  const map = Object.fromEntries(results.filter((r) => r !== null));
-  if (Object.keys(map).length > 0) await kvSet(CACHE_KEY, map, CACHE_TTL_SECONDS);
-  return map;
+  // 새로 구한 값만 덮어씁니다. 실패한 자산은 직전 값이 살아남습니다.
+  const merged = { ...known, ...Object.fromEntries(results.filter((r) => r !== null)) };
+  if (Object.keys(merged).length > 0) {
+    await kvSet(CACHE_KEY, { aprs: merged, computedAt: now }, CACHE_TTL_SECONDS);
+  }
+  return merged;
 }
 
 function computeApr(asset: AssetConfig): Promise<number | null> {
@@ -67,9 +88,13 @@ function computeApr(asset: AssetConfig): Promise<number | null> {
   }
 }
 
-async function postJson<T>(url: string, body: unknown): Promise<T> {
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  timeoutMs = TIMEOUT_MS,
+): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -179,6 +204,7 @@ async function measureBlockSeconds(
 }
 
 const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
+const SOLANA_VOTE_ACCOUNTS_TIMEOUT_MS = 14_000;
 
 /**
  * Solana: 인플레이션은 총 발행량 기준이고 보상은 스테이커에게만 갑니다.
@@ -197,17 +223,22 @@ async function solanaApr(): Promise<number | null> {
       method: 'getSupply',
       params: [{ excludeNonCirculatingAccountsList: true }],
     }),
+    // 밸리데이터 수백 개를 전부 돌려주는 무거운 호출이라 여유를 더 줍니다.
     postJson<{
       result: {
         current: Array<{ activatedStake: number }>;
         delinquent: Array<{ activatedStake: number }>;
       };
-    }>(SOLANA_RPC, {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'getVoteAccounts',
-      params: [{ keepUnstakedDelinquents: false }],
-    }),
+    }>(
+      SOLANA_RPC,
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getVoteAccounts',
+        params: [{ keepUnstakedDelinquents: false }],
+      },
+      SOLANA_VOTE_ACCOUNTS_TIMEOUT_MS,
+    ),
   ]);
 
   const inflation = rate.result?.validator;
