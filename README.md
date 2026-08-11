@@ -122,7 +122,27 @@ ZETA · XPRT · NIL · NOBL · SSV · BTC · ETH · SOL · USDC · HYPE · DATA 
 | NOBL | 퍼미션드 밸리데이터 셋, 공개 스테이킹 없음 (bonded 8 토큰) |
 | DATA | 공개 Cosmos REST 엔드포인트가 없음 (EVM RPC 만 동작) |
 | BTC · USDC | 스테이킹 개념 자체가 없음 |
-| NIL · SSV | 아직 미조사 |
+| NIL | 공식 엔드포인트(`nilchain-api.nillion.network`)에 접근 불가 — 아래 참고 |
+| SSV | 스테이킹은 존재하나 조회 가능한 공개 API 가 없음 — 아래 참고 |
+
+#### NIL (Nillion)
+
+⚠️ **`nillion-api.polkachu.com` 은 Nillion 이 아닙니다.** `node_info` 의 `app_name` 이
+`allorad` (Allora) 로 나오고 `unil` 공급량이 0 입니다. 다른 체인 노드가 붙어 있습니다.
+
+공식 엔드포인트는 `https://nilchain-api.nillion.network` 인데 현재 개발 환경에서 DNS 조차
+해석되지 않아 검증하지 못했습니다. 네트워크 제약일 수도 있으니, 아래가 응답하면
+`lib/chains.ts` 의 nillion 항목에 `networkApr: 'cosmos-mint'` 와 `rest` 를 넣으면 바로 동작합니다.
+
+```bash
+curl "https://nilchain-api.nillion.network/cosmos/mint/v1beta1/annual_provisions"
+```
+
+#### SSV
+
+SSV 는 컨센서스 스테이킹이 아닙니다. SSV 를 예치하면 cSSV 를 받고 보상이 **ETH 로** 지급되는
+구조이고, 수익률이 네트워크 수수료와 총 예치 비율에 따라 변동합니다. 온체인 파라미터 하나로
+환산되지 않고 공개 조회 API 도 확인되지 않아 `null` 로 둡니다.
 
 > **Story Protocol 은 Data Network 로 리브랜딩되어 심볼이 `IP` → `DATA` 로 바뀌었습니다.**
 > 기존 사이트가 아직 `IP` 로 조회하므로 별칭으로 계속 받아줍니다 (`?chain=IP` 동작).
@@ -168,8 +188,19 @@ APR 은 `StakingRewardsConfig.rewards_rate`(FixedPoint64) × 연간 에포크 �
 > (`0x279FC7…`)와 온체인 `authAddress`(`0x3673f7e6…`)가 다릅니다.
 > 밸리데이터 221개를 전수 조회해도 매칭되지 않으므로 `lib/chains.ts` 에 id 를 직접 넣어야 합니다.
 
-Monad 는 보상률을 온체인에 노출하지 않아 APR 은 static 폴백입니다. 단 `consensusStake == 0`
-(= 액티브 셋에 없음)이면 실제 보상이 0 이므로 `apr: 0` 으로 보고합니다.
+**APR 은 보상률 파라미터가 아니라 실제 지급액에서 역산합니다.** Monad 는 보상률을 온체인에
+노출하지 않지만, `getValidator` 가 돌려주는 `accRewardPerToken` 이 스테이크 1 단위당 누적
+지급액이라 두 시점의 차이를 연율로 환산하면 실측 APR 이 나옵니다. 이 누적값은 위임자에게
+실제로 꽂히는 금액이므로 **커미션이 이미 차감된 순 APR** 입니다.
+
+- 스케일은 `1e36` 입니다 (스테이크 1e18 당 보상 1e18). 다른 라운드 스케일을 대입하면
+  APR 이 1e9 배 이상으로 튀어 실측상 배제됩니다.
+- 측정 구간은 12,000 블록(약 1시간)입니다. 구간을 길게 잡으면 밸리데이터가 액티브 셋에서
+  빠져 있던 기간이 섞여 값이 낮아집니다 — 실측 1시간 12.5% / 10시간 7.5% / 25시간 7.2%.
+  0.5시간과 1시간이 12.7% / 12.5% 로 거의 같아 1시간을 씁니다. 결과는 KV 에 10분 캐시합니다.
+- `consensusStake == 0` (= 액티브 셋에 없음)이면 보상이 실제로 0 이므로 측정 없이 `apr: 0`.
+- 과거 블록 조회가 필요합니다. 공개 RPC 는 약 50만 블록까지만 보관하므로 측정 구간을
+  그보다 길게 잡으면 조회가 실패합니다.
 
 ### APR 계산식
 
