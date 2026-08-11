@@ -116,7 +116,9 @@ function resolveChainStats(
     return {
       value: {
         fees: cached.fees,
-        apr: cached.apr,
+        // 응답의 apr 은 백분율이지만 내부 계산은 소수로 다룹니다.
+        // 여기서 되돌리지 않으면 출력 때 100 이 한 번 더 곱해집니다.
+        apr: cached.apr === null ? null : cached.apr / 100,
         staked_amount: cached.staked_amount,
         delegators: cached.delegators,
       },
@@ -190,7 +192,9 @@ function toProjectStats(
 
   // 밸리데이터 체인은 "우리에게 위임했을 때의 순 APR",
   // 자산은 "그 네트워크의 기준 APR(커미션 차감 전)" 입니다.
-  const apr = isAsset ? networkApr : (stats.value.apr ?? fallback?.apr ?? null);
+  // 내부에서는 소수(0.1479)로 다루고 출력할 때만 백분율로 바꿉니다.
+  const aprRatio = isAsset ? networkApr : (stats.value.apr ?? fallback?.apr ?? null);
+  const aprPercent = aprRatio === null ? null : round(aprRatio * 100, 4);
   const fees = isAsset ? null : (stats.value.fees ?? fallback?.fees ?? null);
   const staked = isAsset
     ? null
@@ -203,8 +207,10 @@ function toProjectStats(
     type: isAsset ? 'asset' : 'validator',
     logo: price.value.logo,
     fees: round(fees, 4),
-    apr: round(apr, 6),
-    apr_percent: apr === null ? null : round(apr * 100, 4),
+    // apr 과 apr_percent 는 둘 다 백분율입니다 (14.79 = 14.79%).
+    // 프론트가 apr 을 그대로 % 로 붙여 쓰고 있어 소수(0.1479)를 내보내면 100배 작게 표시됩니다.
+    apr: aprPercent,
+    apr_percent: aprPercent,
     token_price: tokenPrice,
     staked_amount: round(staked, 6),
     staked_amount_usd:

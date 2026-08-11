@@ -2,9 +2,12 @@
  * 응답에 실리는 체인 1개의 스탯.
  *
  * PHP 버전과 달리 모든 수치는 문자열이 아니라 number 로 내려갑니다.
- * - `apr`         : 소수 (0.145 = 14.5%)  ← 프론트에서 포맷
- * - `apr_percent` : 백분율 (14.5)         ← 기존 Framer 호환용
+ * - `apr`         : 백분율 (14.5 = 14.5%)
+ * - `apr_percent` : 백분율 (14.5) — `apr` 과 동일한 값
  * - `fees`        : 커미션 백분율 (5.0)
+ *
+ * apr 과 apr_percent 가 같은 값인 건 의도적입니다. 프론트가 apr 을 그대로 % 로
+ * 붙여 쓰고 있어서, 소수(0.145)를 내보내면 화면에 100배 작게 표시됩니다.
  */
 /** live = 방금 수집 / cached = 마지막 성공 스냅샷 / static = 하드코딩 폴백 / none = 해당 없음 */
 export type DataSource = 'live' | 'cached' | 'static' | 'none';
