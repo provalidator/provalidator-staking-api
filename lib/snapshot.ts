@@ -13,9 +13,21 @@ import type {
   Snapshot,
 } from './types';
 
-const SNAPSHOT_KEY = 'provalidator:snapshot:v1';
+const SNAPSHOT_KEY = 'provalidator:snapshot:v2';
 /** 업스트림이 계속 죽어 있어도 이 기간 동안은 마지막 성공값으로 응답합니다. */
 const SNAPSHOT_TTL_SECONDS = 86_400;
+
+/**
+ * 이 기간 안에 만들어진 스냅샷이 KV 에 있으면 업스트림을 아예 건드리지 않고 재사용합니다.
+ *
+ * 엔드포인트마다 URL 이 달라 CDN 캐시가 따로 잡히는데, 이 게이트가 없으면
+ * `global_stats` · `chains` · `token=SOL` 이 각자 전체 수집을 유발합니다.
+ * 게이트를 두면 어떤 엔드포인트가 먼저 깨우든 수집은 분당 1회로 수렴합니다.
+ *
+ * CDN 의 s-maxage 가 60초라 데이터는 최대 (60 + 이 값)초만큼 오래될 수 있습니다.
+ * 스테이킹 지표에는 충분히 짧은 시간입니다.
+ */
+const SNAPSHOT_FRESH_SECONDS = 50;
 
 /** 체인 데이터와 가격은 서로 독립적으로 폴백합니다. */
 interface Resolved<T> {
@@ -39,8 +51,14 @@ interface PriceValue {
 export async function buildSnapshot(): Promise<Snapshot> {
   const now = Math.floor(Date.now() / 1000);
 
-  // KV 읽기 · 가격 조회 · 체인 수집을 전부 동시에 시작합니다.
-  const previousPromise = kvGet<Snapshot>(SNAPSHOT_KEY);
+  // 방금 만든 스냅샷이 있으면 업스트림을 건드리지 않고 그대로 씁니다.
+  // 이 한 번의 KV 조회를 먼저 기다리는 대신, 나머지 수집 전체를 건너뜁니다.
+  const previous = await kvGet<Snapshot>(SNAPSHOT_KEY);
+  if (previous && now - previous.generated_at < SNAPSHOT_FRESH_SECONDS) {
+    return previous;
+  }
+
+  // 가격 조회 · 체인 수집 · 네트워크 APR 을 전부 동시에 시작합니다.
   const pricesPromise = fetchPrices(
     CHAINS.map((c) => c.coingeckoId).filter((id): id is string => Boolean(id)),
   );
@@ -67,8 +85,7 @@ export async function buildSnapshot(): Promise<Snapshot> {
     CHAINS.filter((c) => c.kind === 'asset'),
   );
 
-  const [previous, prices, liveResults, networkAprs] = await Promise.all([
-    previousPromise,
+  const [prices, liveResults, networkAprs] = await Promise.all([
     pricesPromise,
     Promise.all(livePromises),
     networkAprPromise,
