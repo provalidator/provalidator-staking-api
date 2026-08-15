@@ -36,9 +36,17 @@ interface AprCache {
   computedAt: number;
 }
 
+/**
+ * 방문자 요청에서 갱신이 돌 때 응답을 붙잡아둘 수 있는 최대 시간.
+ * 이 안에 못 끝낸 자산은 직전 값을 그대로 유지합니다.
+ * 크론(force)은 이 제한 없이 끝까지 기다립니다.
+ */
+const REFRESH_DEADLINE_MS = 3_000;
+
 /** asset id → 네트워크 APR(소수). 계산 불가한 자산은 키가 없습니다. */
 export async function fetchNetworkAprs(
   assets: AssetConfig[],
+  options: { force?: boolean } = {},
 ): Promise<Record<string, number>> {
   const targets = assets.filter((a) => a.networkApr);
   if (targets.length === 0) return {};
@@ -49,12 +57,13 @@ export async function fetchNetworkAprs(
 
   const isFresh =
     cached && now - cached.computedAt < FRESH_SECONDS && Object.keys(known).length > 0;
-  if (isFresh) return known;
+  if (isFresh && !options.force) return known;
 
+  const deadline = options.force ? null : REFRESH_DEADLINE_MS;
   const results = await Promise.all(
     targets.map(async (asset) => {
       try {
-        const apr = await computeApr(asset);
+        const apr = await withDeadline(computeApr(asset), deadline);
         return apr !== null && apr > 0 ? ([asset.id, apr] as const) : null;
       } catch (error) {
         console.error(`[${asset.id}] network APR failed:`, error);
@@ -69,6 +78,16 @@ export async function fetchNetworkAprs(
     await kvSet(CACHE_KEY, { aprs: merged, computedAt: now }, CACHE_TTL_SECONDS);
   }
   return merged;
+}
+
+/** ms 안에 안 끝나면 null 을 돌려줍니다 (호출부가 직전 값을 유지). ms 가 null 이면 무제한. */
+function withDeadline<T>(promise: Promise<T>, ms: number | null): Promise<T | null> {
+  if (ms === null) return promise;
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function computeApr(asset: AssetConfig): Promise<number | null> {

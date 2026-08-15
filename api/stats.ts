@@ -2,19 +2,20 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { findChain } from '../lib/chains';
 import { applyCors } from '../lib/cors';
 import { kvEnabled, kvGet, kvSet } from '../lib/kv';
-import { buildSnapshot, computeGlobalStats } from '../lib/snapshot';
+import { buildSnapshot, computeGlobalStats, SNAPSHOT_KEY } from '../lib/snapshot';
 import type { Snapshot } from '../lib/types';
 
 /**
  * CDN 캐시 정책 — 여기가 이 API 의 핵심입니다.
  *
- * s-maxage=60            : Vercel Edge 가 60초 동안 캐시된 JSON 을 그대로 응답 (함수 실행 0회)
- * stale-while-revalidate : 60초가 지나도 옛날 값을 "즉시" 주고 백그라운드에서 갱신
- *                          → 사용자는 체인 RPC 지연을 절대 체감하지 않습니다.
+ * s-maxage=300               : Vercel Edge 가 5분간 캐시된 JSON 을 그대로 응답 (함수 실행 0회)
+ * stale-while-revalidate=1일 : 5분이 지나도 옛날 값을 "즉시" 주고 백그라운드에서 갱신
+ *                              → 만료 순간에 들어온 방문자도 기다리지 않습니다.
  *
- * 즉, "1분마다 JSON 파일에 저장" 이 이 헤더 한 줄로 대체됩니다. 크론 불필요.
+ * 방문자가 대기하지 않는 건 크론이 아니라 이 stale-while-revalidate 덕분입니다.
+ * 크론은 CDN 캐시가 아예 없는 콜드 상태를 줄여주는 보조 수단입니다 (api/refresh.ts).
  */
-const CACHE_CONTROL = 'public, s-maxage=60, stale-while-revalidate=600';
+const CACHE_CONTROL = 'public, s-maxage=300, stale-while-revalidate=86400';
 
 function first(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value) ?? '';
@@ -123,10 +124,17 @@ async function checkKv() {
   await kvSet(probeKey, token, 60);
   const readBack = await kvGet<string>(probeKey);
 
+  // 키는 반드시 snapshot.ts 에서 가져옵니다. 하드코딩하면 키를 올릴 때 조용히 어긋나고,
+  // 스냅샷이 멀쩡한데도 snapshot_cached 가 false 로 보고됩니다.
+  const snapshot = await kvGet<Snapshot>(SNAPSHOT_KEY);
+  const now = Math.floor(Date.now() / 1000);
+
   return {
     kv_configured: true,
     kv_working: readBack === token,
-    snapshot_cached: (await kvGet<unknown>('provalidator:snapshot:v1')) !== null,
+    snapshot_cached: snapshot !== null,
+    snapshot_generated_at: snapshot?.generated_at ?? null,
+    snapshot_age_seconds: snapshot ? now - snapshot.generated_at : null,
     axelar_chain_count_cached:
       (await kvGet<number>('provalidator:axelar:maintained:v1')) ?? null,
   };

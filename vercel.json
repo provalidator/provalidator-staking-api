@@ -8,5 +8,8 @@
   },
   "rewrites": [
     { "source": "/provalidator_info_api.php", "destination": "/api/stats" }
+  ],
+  "crons": [
+    { "path": "/api/refresh", "schedule": "0 0 * * *" }
   ]
 }

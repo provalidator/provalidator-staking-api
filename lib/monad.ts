@@ -37,8 +37,19 @@ const SECONDS_PER_YEAR = 31_536_000;
  * 0.5시간과 1시간이 12.7% / 12.5% 로 거의 같아 1시간을 씁니다.
  */
 const APR_SAMPLE_BLOCKS = 12_000;
-const APR_CACHE_KEY = 'provalidator:monad-apr:v1';
-const APR_CACHE_TTL_SECONDS = 600;
+/**
+ * 값은 하루 보관하고 10분 지난 것만 다시 잽니다.
+ * 재측정이 실패해도 직전 값을 유지해야 합니다 — 그러지 않으면 apr 이 null 로 떨어지고
+ * 상위에서 static 폴백(근거 없는 25.6%)이 되살아납니다.
+ */
+const APR_CACHE_KEY = 'provalidator:monad-apr:v2';
+const APR_CACHE_TTL_SECONDS = 86_400;
+const APR_FRESH_SECONDS = 600;
+
+interface AprCache {
+  apr: number;
+  computedAt: number;
+}
 
 export interface ValidatorInfo {
   authAddress: string;
@@ -131,39 +142,53 @@ export async function getValidator(
 async function measureApr(chain: MonadChain): Promise<number | null> {
   if (chain.validatorId === null) return null;
 
-  const cached = await kvGet<number>(APR_CACHE_KEY);
-  if (typeof cached === 'number' && cached > 0) return cached;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const cached = await kvGet<AprCache>(APR_CACHE_KEY);
+  const lastGood = cached?.apr && cached.apr > 0 ? cached.apr : null;
+  if (lastGood !== null && nowSeconds - cached!.computedAt < APR_FRESH_SECONDS) {
+    return lastGood;
+  }
 
-  const latest = await rpcCall<{ number: string; timestamp: string }>(
-    chain.rpc,
-    'eth_getBlockByNumber',
-    ['latest', false],
-  );
-  const height = Number(BigInt(latest.number));
-  const olderTag = `0x${(height - APR_SAMPLE_BLOCKS).toString(16)}`;
+  // 여기서부터 실패하면 lastGood 을 돌려줍니다 (없으면 null).
+  try {
+    const latest = await rpcCall<{ number: string; timestamp: string }>(
+      chain.rpc,
+      'eth_getBlockByNumber',
+      ['latest', false],
+    );
+    const height = Number(BigInt(latest.number));
+    const olderTag = `0x${(height - APR_SAMPLE_BLOCKS).toString(16)}`;
 
-  const [now, before, olderBlock] = await Promise.all([
-    getValidator(chain.rpc, chain.validatorId, latest.number),
-    getValidator(chain.rpc, chain.validatorId, olderTag),
-    rpcCall<{ timestamp: string }>(chain.rpc, 'eth_getBlockByNumber', [
-      olderTag,
-      false,
-    ]),
-  ]);
-  if (!now || !before) return null;
+    const [now, before, olderBlock] = await Promise.all([
+      getValidator(chain.rpc, chain.validatorId, latest.number),
+      getValidator(chain.rpc, chain.validatorId, olderTag),
+      rpcCall<{ timestamp: string }>(chain.rpc, 'eth_getBlockByNumber', [
+        olderTag,
+        false,
+      ]),
+    ]);
+    if (!now || !before) return lastGood;
 
-  const elapsed = Number(BigInt(latest.timestamp) - BigInt(olderBlock.timestamp));
-  if (elapsed <= 0) return null;
+    const elapsed = Number(BigInt(latest.timestamp) - BigInt(olderBlock.timestamp));
+    if (elapsed <= 0) return lastGood;
 
-  // 큰 수끼리는 BigInt 로 먼저 빼서 정밀도 손실을 막습니다.
-  const delta = Number(now.accRewardPerToken - before.accRewardPerToken);
-  if (delta <= 0) return null;
+    // 큰 수끼리는 BigInt 로 먼저 빼서 정밀도 손실을 막습니다.
+    const delta = Number(now.accRewardPerToken - before.accRewardPerToken);
+    if (delta <= 0) return lastGood;
 
-  const apr = (delta / ACC_REWARD_SCALE) * (SECONDS_PER_YEAR / elapsed);
-  if (!Number.isFinite(apr) || apr <= 0) return null;
+    const apr = (delta / ACC_REWARD_SCALE) * (SECONDS_PER_YEAR / elapsed);
+    if (!Number.isFinite(apr) || apr <= 0) return lastGood;
 
-  await kvSet(APR_CACHE_KEY, apr, APR_CACHE_TTL_SECONDS);
-  return apr;
+    await kvSet(
+      APR_CACHE_KEY,
+      { apr, computedAt: nowSeconds },
+      APR_CACHE_TTL_SECONDS,
+    );
+    return apr;
+  } catch (error) {
+    console.error('[monad] APR measurement failed:', error);
+    return lastGood;
+  }
 }
 
 /**

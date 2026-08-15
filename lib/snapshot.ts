@@ -13,7 +13,8 @@ import type {
   Snapshot,
 } from './types';
 
-const SNAPSHOT_KEY = 'provalidator:snapshot:v2';
+/** health 엔드포인트도 이 상수를 씁니다 — 키를 하드코딩하면 조용히 어긋납니다. */
+export const SNAPSHOT_KEY = 'provalidator:snapshot:v2';
 /** 업스트림이 계속 죽어 있어도 이 기간 동안은 마지막 성공값으로 응답합니다. */
 const SNAPSHOT_TTL_SECONDS = 86_400;
 
@@ -24,10 +25,9 @@ const SNAPSHOT_TTL_SECONDS = 86_400;
  * `global_stats` · `chains` · `token=SOL` 이 각자 전체 수집을 유발합니다.
  * 게이트를 두면 어떤 엔드포인트가 먼저 깨우든 수집은 분당 1회로 수렴합니다.
  *
- * CDN 의 s-maxage 가 60초라 데이터는 최대 (60 + 이 값)초만큼 오래될 수 있습니다.
- * 스테이킹 지표에는 충분히 짧은 시간입니다.
+ * CDN 의 s-maxage(300초)보다 살짝 짧게 잡아, CDN 이 재검증하러 올 때는 새로 수집하게 합니다.
  */
-const SNAPSHOT_FRESH_SECONDS = 50;
+const SNAPSHOT_FRESH_SECONDS = 280;
 
 /** 체인 데이터와 가격은 서로 독립적으로 폴백합니다. */
 interface Resolved<T> {
@@ -48,13 +48,20 @@ interface PriceValue {
  * 체인 데이터와 가격은 별개로 폴백합니다 — CoinGecko 만 죽어도 체인 수치는 라이브로 나갑니다.
  * 한 체인이 실패해도 나머지는 정상 응답하며, API 는 절대 5xx 를 내지 않습니다.
  */
-export async function buildSnapshot(): Promise<Snapshot> {
+export async function buildSnapshot(
+  options: { force?: boolean } = {},
+): Promise<Snapshot> {
   const now = Math.floor(Date.now() / 1000);
 
   // 방금 만든 스냅샷이 있으면 업스트림을 건드리지 않고 그대로 씁니다.
   // 이 한 번의 KV 조회를 먼저 기다리는 대신, 나머지 수집 전체를 건너뜁니다.
+  // 크론(api/refresh.ts)은 force 로 이 게이트를 건너뛰고 항상 새로 만듭니다.
   const previous = await kvGet<Snapshot>(SNAPSHOT_KEY);
-  if (previous && now - previous.generated_at < SNAPSHOT_FRESH_SECONDS) {
+  if (
+    !options.force &&
+    previous &&
+    now - previous.generated_at < SNAPSHOT_FRESH_SECONDS
+  ) {
     return previous;
   }
 
